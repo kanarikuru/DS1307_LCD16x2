@@ -1,0 +1,444 @@
+#include <Arduino.h>
+
+// Định nghĩa các chân kết nối
+#define RSpin 13
+#define ENpin 12
+uint8_t DATApin[4] = {5, 4, 3, 2};
+
+#define nutStartStop 8
+#define nutMode 6
+#define nutLight 9
+
+#define LCD_COLS 16
+#define LCD_ROWS 2
+
+// Biến lưu trữ thời gian
+int second = 0;
+int minute = 0;
+int hour = 0;
+int wday = 2 ;
+int day = 1;
+int month = 1;
+int year = 2024;
+bool isRealTime = 1;
+// Biến lưu trữ trạng thái của các nút
+bool startStopButtonState = HIGH;
+bool modeButtonState = HIGH;
+bool lightButtonState = HIGH;
+int mode ;
+// Biến lưu trữ thời gian khi nút được nhấn lần cuối
+unsigned long startStopButtonLastPressed = 0;
+unsigned long modeButtonLastPressed = 0;
+unsigned long lightButtonLastPressed = 0;
+
+// Hàm khởi tạo LCD
+void lcdSetup() {
+  pinMode(RSpin, OUTPUT);
+  pinMode(ENpin, OUTPUT);
+  for (int i = 0; i < 4; i++) {
+    pinMode(DATApin[i], OUTPUT);
+  }
+  delay(15);
+
+  // Khởi tạo LCD theo chuẩn 4-bit
+  command2LCD(0x03);
+  delay(5);
+  command2LCD(0x03);
+  delayMicroseconds(150);
+  command2LCD(0x03);
+  delayMicroseconds(150);
+  command2LCD(0x02);
+  delayMicroseconds(150);
+  command2LCD(0x28);
+  delayMicroseconds(150);
+  command2LCD(0x0E);
+  delayMicroseconds(150);
+  command2LCD(0x06);
+  delayMicroseconds(150);
+  command2LCD(0x0C);
+}
+
+// Hàm gửi dữ liệu 4-bit
+void write4bits(uint8_t data) 
+{
+  for (int i = 0; i < 4; i++) 
+  {
+    digitalWrite(DATApin[i], (data >> i) & 0x01);
+  }
+  digitalWrite(ENpin, HIGH);
+  delayMicroseconds(1);
+  digitalWrite(ENpin, LOW);
+  delayMicroseconds(50);
+}
+
+// Hàm gửi lệnh tới LCD
+void command2LCD(uint8_t cmd)
+{
+  digitalWrite(RSpin, LOW);
+  write4bits(cmd >> 4);
+  
+  digitalWrite(RSpin, LOW);
+  write4bits(cmd);
+}
+
+// Hàm gửi dữ liệu tới LCD
+void data2LCD(uint8_t data) 
+{
+  digitalWrite(RSpin, HIGH);
+  write4bits(data >> 4);
+  
+  digitalWrite(RSpin, HIGH);
+  write4bits(data);
+}
+
+// Hàm gửi xâu ký tự tới LCD
+void Str2LCD(String str)
+{
+  int i = 0;
+  while(str[i] != '\0')
+  {
+    data2LCD(str[i]);
+    i++;
+  }
+}
+
+void LCD_gotoxy(unsigned char x, unsigned char y) 
+{
+  unsigned char address;
+  if(y != 1)
+  address = 0xC0 + x - 1;
+  else
+  address = 0x80 + x - 1;
+  command2LCD(address);
+  _delay_ms(2);
+}
+// Hàm khởi tạo các chân IO và đặt chân nút là INPUT_PULLUP
+void ioSetup() 
+{
+  pinMode(nutStartStop, INPUT_PULLUP);
+  pinMode(nutMode, INPUT_PULLUP);
+  pinMode(nutLight, INPUT_PULLUP);
+}
+
+// Hàm hiển thị thời gian lên LCD
+void displayTime() 
+{
+  if(isRealTime){
+  command2LCD(0x80); // Di chuyển con trỏ đến hàng 1, cột 1
+  data2LCD((day / 10) + '0'); // Hiển thị chữ số hàng chục của ngày
+  data2LCD((day % 10) + '0'); // Hiển thị chữ số hàng đơn vị của ngày
+  data2LCD('/');
+  data2LCD((month / 10) + '0'); // Hiển thị chữ số hàng chục của tháng
+  data2LCD((month % 10) + '0'); // Hiển thị chữ số hàng đơn vị của tháng
+  data2LCD('/');
+  data2LCD((year / 1000) + '0'); // Hiển thị chữ số hàng nghìn của năm
+  data2LCD(((year / 100) % 10) + '0'); // Hiển thị chữ số hàng trăm của năm
+  data2LCD(((year / 10) % 10) + '0'); // Hiển thị chữ số hàng chục của năm
+  data2LCD((year % 10) + '0'); // Hiển thị chữ số hàng đơn vị của năm
+  
+  command2LCD(0xC0); // Di chuyển con trỏ đến hàng 2, cột 1
+  data2LCD((hour / 10) + '0'); // Hiển thị chữ số hàng chục của giờ
+  data2LCD((hour % 10) + '0'); // Hiển thị chữ số hàng đơn vị của giờ
+  data2LCD(':');
+  data2LCD((minute / 10) + '0'); // Hiển thị chữ số hàng chục của phút
+  data2LCD((minute % 10) + '0'); // Hiển thị chữ số hàng đơn vị của phút
+  data2LCD(':');
+  data2LCD((second / 10) + '0'); // Hiển thị chữ số hàng chục của giây
+  data2LCD((second % 10) + '0'); // Hiển thị chữ số hàng đơn vị của giây
+  }
+}
+
+// Hàm gửi tín hiệu start trên giao diện I2C
+void i2cStart() 
+{
+  // Set các chân SDA và SCL là OUTPUT
+  pinMode(SDA, OUTPUT);
+  pinMode(SCL, OUTPUT);
+  
+  digitalWrite(SDA, HIGH); // Set chân SDA lên mức HIGH
+  digitalWrite(SCL, HIGH); // Set chân SCL lên mức HIGH
+  delayMicroseconds(4); // Delay 4 micro giây
+  digitalWrite(SDA, LOW); // Set chân SDA lên mức LOW
+  delayMicroseconds(4); // Delay 4 micro giây
+  digitalWrite(SCL, LOW); // Set chân SCL lên mức LOW
+}
+
+// Hàm gửi tín hiệu stop trên giao diện I2C
+void i2cStop() 
+{
+  digitalWrite(SDA, LOW); // Set chân SDA lên mức LOW
+  digitalWrite(SCL, HIGH); // Set chân SCL lên mức HIGH
+  delayMicroseconds(4); // Delay 4 micro giây
+  digitalWrite(SDA, HIGH); // Set chân SDA lên mức HIGH
+  delayMicroseconds(4); // Delay 4 micro giây
+}
+
+// Hàm gửi một byte dữ liệu trên giao diện I2C
+void i2cWriteByte(uint8_t data) 
+{
+  for (int i = 0; i < 8; i++) 
+  {
+    digitalWrite(SDA, (data & 0x80) ? HIGH : LOW); // Set chân SDA tương ứng với bit của data
+    digitalWrite(SCL, HIGH); // Set chân SCL lên mức HIGH
+    delayMicroseconds(2); // Delay 2 micro giây
+    digitalWrite(SCL, LOW); // Set chân SCL lên mức LOW
+    data <<= 1; // Dịch trái data để xử lý bit tiếp theo
+  }
+  
+  // Chờ ACK
+  pinMode(SDA, INPUT); // Set chân SDA là INPUT
+  digitalWrite(SCL, HIGH); // Set chân SCL lên mức HIGH
+  delayMicroseconds(2); // Delay 2 micro giây
+  if (digitalRead(SDA) == HIGH) 
+  { // Kiểm tra ACK từ thiết bị
+    // Nếu ACK không được trả về, có thể xử lý tại đây
+  }
+  digitalWrite(SCL, LOW); // Set chân SCL lên mức LOW
+  pinMode(SDA, OUTPUT); // Set chân SDA là OUTPUT
+}
+
+// Hàm đọc một byte dữ liệu từ giao diện I2C
+uint8_t i2cReadByte(bool ack) 
+{
+  uint8_t data = 0;
+  pinMode(SDA, INPUT); // Set chân SDA là INPUT
+  for (int i = 0; i < 8; i++) 
+  {
+    digitalWrite(SCL, HIGH); // Set chân SCL lên mức HIGH
+    delayMicroseconds(2); // Delay 2 micro giây
+    data <<= 1; // Dịch trái data để nhận bit mới
+    if (digitalRead(SDA) == HIGH) 
+    {
+      data |= 0x01; // Nếu chân SDA là HIGH, đặt bit tương ứng của data là 1
+    }
+    digitalWrite(SCL, LOW); // Set chân SCL lên mức LOW
+  }
+  pinMode(SDA, OUTPUT); // Set chân SDA là OUTPUT
+  digitalWrite(SDA, ack ? LOW : HIGH); // Gửi ACK hoặc NACK tùy thuộc vào biến ack
+  digitalWrite(SCL, HIGH); // Set chân SCL lên mức HIGH
+  delayMicroseconds(2); // Delay 2 micro giây
+  digitalWrite(SCL, LOW); // Set chân SCL lên mức LOW
+  pinMode(SDA, OUTPUT); // Set chân SDA là OUTPUT
+  return data; // Trả về byte dữ liệu nhận được
+}
+
+// Hàm đọc dữ liệu từ RTC
+void readRTC(uint8_t *rtcData) 
+{
+  i2cStart(); // Gửi tín hiệu start
+  i2cWriteByte(0xD0); // Gửi địa chỉ của mạch RTC (0xD0 là địa chỉ ghi)
+  i2cWriteByte(0x00); // Gửi địa chỉ bắt đầu của dữ liệu cần đọc (0x00 là địa chỉ của giây)
+  i2cStop(); // Gửi tín hiệu stop
+
+  i2cStart(); // Gửi tín hiệu start
+  i2cWriteByte(0xD1); // Gửi địa chỉ của mạch RTC (0xD1 là địa chỉ đọc)
+
+  for (int i = 0; i < 7; i++) 
+  {
+    rtcData[i] = i2cReadByte(i < 6); // Đọc dữ liệu từ mạch RTC và lưu vào mảng rtcData
+  }
+
+  i2cStop(); // Gửi tín hiệu stop
+}
+
+
+// Hàm chuyển đổi từ BCD sang Decimal
+int bcdToDec(uint8_t val) 
+{
+  return (val / 16 * 10) + (val % 16);
+}
+
+// Hàm cập nhật thời gian từ RTC
+void updateTime() 
+{
+  if (isRealTime){
+  uint8_t rtcData[7]; // Mảng lưu trữ dữ liệu RTC (7 byte)
+  readRTC(rtcData); // Đọc dữ liệu từ RTC
+  // Giả định: rtcData[0] là giây, rtcData[1] là phút, rtcData[2] là giờ,
+  // rtcData[3] là thứ, rtcData[4] là ngày, rtcData[5] là tháng , rtcData[6] là năm 
+  second = bcdToDec(rtcData[0] & 0x7F); // BCD to Decimal, loại bỏ bit 7 của giây
+  minute = bcdToDec(rtcData[1]);
+  hour = bcdToDec(rtcData[2] & 0x3F); // Format 24 H
+  wday = bcdToDec((rtcData[3]));
+  day = bcdToDec((rtcData[4]));
+  month = bcdToDec((rtcData[5]));
+  year = bcdToDec(rtcData[6]) +2000;
+  }
+  else if(isRealTime == 0) 
+  {
+
+  }
+}
+
+// Hàm xử lý nút Start/Stop
+int vitri = 0; //vị trí của giây phút ngày tháng
+void handleStartStopButton() 
+{
+  if(mode == 1)
+  {
+    int currentState = digitalRead(nutStartStop);
+  
+    if (currentState == LOW )  // button just pressed
+    {
+      delay(50);  // debounce delay
+      if (digitalRead(nutStartStop) == LOW)  // still pressed after debounce delay
+      {
+        delay(50); 
+        if(vitri == 1 || vitri == 0)
+        {
+           second++;
+           if(second>=60)
+           {
+            second = 0 ;
+           }
+           LCD_gotoxy(7,2);
+           data2LCD((second / 10) + '0'); // Hiển thị chữ số hàng chục của giây
+           LCD_gotoxy(8,2);
+           data2LCD((second % 10) + '0'); // Hiển thị chữ số hàng đơn vị của giây
+           LCD_gotoxy(8,2);
+        }
+        else if(vitri == 2)
+        {
+           minute++;
+           if(minute>=60)
+           {
+            minute = 0 ;
+           }
+           LCD_gotoxy(4,2);
+           data2LCD((minute / 10) + '0'); // Hiển thị chữ số hàng chục của phút
+           LCD_gotoxy(5,2);
+           data2LCD((minute % 10) + '0'); // Hiển thị chữ số hàng đơn vị của phút
+           LCD_gotoxy(5,2);
+        }
+        else if(vitri == 3)
+        {
+           hour++;
+           if(hour>=24)
+           {
+            hour = 0 ;
+           }
+           LCD_gotoxy(1,2);
+           data2LCD((hour / 10) + '0'); // Hiển thị chữ số hàng chục của phút
+           LCD_gotoxy(2,2);
+           data2LCD((hour % 10) + '0'); // Hiển thị chữ số hàng đơn vị của phút
+           LCD_gotoxy(2,2);
+        }
+        else if(vitri == 4)
+        {
+           day++;
+           if(day>=31)
+           {
+            day = 1 ;
+           }
+           LCD_gotoxy(1,1);
+           data2LCD((day / 10) + '0'); // Hiển thị chữ số hàng chục của giờ
+           LCD_gotoxy(2,1);
+           data2LCD((day % 10) + '0'); // Hiển thị chữ số hàng đơn vị của giờ
+           LCD_gotoxy(2,1);
+        }
+        else if(vitri == 5)
+        {
+           month++;
+           if(month>=13)
+           {
+            month = 1 ;
+           }
+           LCD_gotoxy(4,1);
+           data2LCD((month / 10) + '0'); // Hiển thị chữ số hàng chục của tháng
+           LCD_gotoxy(5,1);
+           data2LCD((month % 10) + '0'); // Hiển thị chữ số hàng đơn vị của tháng
+           LCD_gotoxy(5,1);
+        }
+      }
+    }
+  }
+}
+
+// Hàm xử lý nút Mode
+int buttonPressCount = 0;
+
+void handleModeButton() 
+{
+  int currentState = digitalRead(nutMode);
+  if (currentState != modeButtonState) 
+  {
+    modeButtonLastPressed = millis(); 
+    modeButtonState = currentState; 
+  }
+  if (currentState == 0 && millis() - modeButtonLastPressed > 1000) 
+  {
+      mode = 1;
+  }
+  if (mode == 1)
+  {
+    isRealTime = 0;
+    command2LCD(0x0F);
+    if(vitri == 0) LCD_gotoxy(8,2);
+  }
+}
+
+// Hàm xử lý nút Light
+void handleLightButton() 
+{
+  //int currentState = digitalRead(nutLight);
+  // if (currentState != lightButtonState && currentState == LOW) {
+  //   // Nếu trạng thái của nút thay đổi và nút được nhấn
+  //   lightButtonLastPressed = millis(); // Lưu thời gian nút được nhấn
+  //   // Thêm logic xử lý khi nút Light được nhấn ở đây
+  // }
+  // lightButtonState = currentState; // Lưu trạng thái của nút
+  int currentState = digitalRead(nutLight);
+  if(mode == 1)
+  {
+    if (currentState == LOW)  
+    {
+      delay(50);  //debounce
+      if (digitalRead(nutLight) == LOW)  
+      {
+        delay(50); 
+        vitri++;
+        if(vitri == 1 || vitri == 0)
+        {
+          LCD_gotoxy(8,2);
+        }
+        else if(vitri == 2)
+        {
+           LCD_gotoxy(5,2);
+        }
+        else if(vitri == 3)
+        {
+           LCD_gotoxy(2,2);
+        }
+        else if(vitri == 4)
+        {
+           LCD_gotoxy(2,1);
+        }
+        else if(vitri == 5)
+        {
+           LCD_gotoxy(5,1);
+        }
+        else if(vitri > 5)
+        {
+          vitri = 0;
+          LCD_gotoxy(8,2);
+        }
+      }
+    }
+  }
+}
+
+void setup() 
+{
+  Serial.begin(115200);
+  ioSetup(); // Khởi tạo các chân IO
+  lcdSetup(); // Khởi tạo LCD
+}
+
+void loop() 
+{
+  updateTime(); // Cập nhật thời gian từ RTC
+  displayTime(); // Hiển thị thời gian lên LCD
+  handleStartStopButton(); // Xử lý nút Start/Stop
+  handleModeButton(); // Xử lý nút Mode
+  handleLightButton(); // Xử lý nút Light
+}
